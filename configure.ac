@@ -12,7 +12,6 @@ AM_SILENT_RULES([yes])
 # system files.
 AM_MAINTAINER_MODE([enable])
 AC_CONFIG_SRCDIR([i3lock.c])
-AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
 
 dnl Verify macros defined in m4/ such as AX_SANITIZERS are not present in the
@@ -63,9 +62,56 @@ AC_CHECK_TYPES([mode_t, off_t, pid_t, size_t, ssize_t], , [AC_MSG_FAILURE([canno
 
 # Checks for library functions.
 AC_FUNC_FORK
-AC_FUNC_LSTAT_FOLLOWS_SLASHED_SYMLINK
-AC_FUNC_STRNLEN
 AC_CHECK_FUNCS([atexit dup2 ftruncate getcwd gettimeofday localtime_r memchr memset mkdir rmdir setlocale socket strcasecmp strchr strdup strerror strncasecmp strndup strrchr strspn strstr strtol strtoul], , [AC_MSG_FAILURE([cannot find the $ac_func function, which i3lock requires])])
+
+# Check for functions with a compatibility implementation.
+AC_CONFIG_LIBOBJ_DIR(compat)
+AC_REPLACE_FUNCS([ \
+	getdtablecount \
+	freezero \
+	recallocarray \
+])
+
+# Look for imsg_init in libutil.
+AC_SEARCH_LIBS(imsg_init, util, found_imsg_init=yes, found_imsg_init=no)
+if test "x$found_imsg_init" = xyes; then
+	AC_DEFINE([HAVE_IMSG], [1], [imsg in libutil])
+else
+	AC_LIBOBJ(imsg)
+	AC_LIBOBJ(imsg-buffer)
+fi
+
+# Look for a suitable queue.h.
+AC_CHECK_DECL(
+	TAILQ_CONCAT,
+	found_queue_h=yes,
+	found_queue_h=no,
+	[#include <sys/queue.h>]
+)
+AC_CHECK_DECL(
+	TAILQ_PREV,
+	found_queue_h=yes,
+	found_queue_h=no,
+	[#include <sys/queue.h>]
+)
+AC_CHECK_DECL(
+	TAILQ_REPLACE,
+	,
+	found_queue_h=no,
+	[#include <sys/queue.h>]
+)
+if test "x$found_queue_h" = xyes; then
+	AC_DEFINE([HAVE_QUEUE_H], [1], [OpenBSD queue.h])
+fi
+
+# Look for /proc/$$.
+AC_MSG_CHECKING(for /proc/\$\$)
+if test -d /proc/$$; then
+	AC_DEFINE([HAVE_PROC_PID], [1], [/proc])
+	AC_MSG_RESULT(yes)
+else
+	AC_MSG_RESULT(no)
+fi
 
 # Checks for libraries.
 
@@ -100,6 +146,7 @@ PKG_CHECK_MODULES([CAIRO], [cairo])
 # Checks for programs.
 AC_PROG_AWK
 AC_PROG_CPP
+AC_PROG_EGREP
 AC_PROG_INSTALL
 AC_PROG_MAKE_SET
 AC_PROG_RANLIB
@@ -112,7 +159,11 @@ AX_CHECK_COMPILE_FLAG([-Wunused-value], [AX_APPEND_FLAG([-Wunused-value], [AM_CF
 AC_SUBST(AM_CFLAGS)
 
 # Checks for header files.
-AC_CHECK_HEADERS([fcntl.h float.h inttypes.h limits.h locale.h netinet/in.h paths.h stddef.h stdint.h stdlib.h string.h sys/param.h sys/socket.h sys/time.h unistd.h], , [AC_MSG_FAILURE([cannot find the $ac_header header, which i3lock requires])])
+AC_CHECK_HEADERS([fcntl.h float.h inttypes.h limits.h locale.h netinet/in.h paths.h stddef.h stdint.h stdlib.h string.h sys/param.h sys/socket.h sys/time.h sys/types.h sys/uio.h unistd.h], , [AC_MSG_FAILURE([cannot find the $ac_header header, which i3lock requires])])
+# Check for various headers. Alternatives included from compat.h.
+AC_CHECK_HEADERS([ \
+	libutil.h \
+])
 
 AC_CONFIG_FILES([Makefile])
 

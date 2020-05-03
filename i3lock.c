@@ -6,8 +6,6 @@
  * See LICENSE for licensing information
  *
  */
-#include <config.h>
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <pwd.h>
@@ -47,6 +45,7 @@
 #include "unlock_indicator.h"
 #include "randr.h"
 #include "dpi.h"
+#include "compat.h"
 
 #define TSTAMP_N_SECS(n) (n * 1.0)
 #define TSTAMP_N_MINS(n) (60 * TSTAMP_N_SECS(n))

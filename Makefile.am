@@ -29,6 +29,7 @@ i3lock_CPPFLAGS = \
 	$(CODE_COVERAGE_CPPFLAGS)
 
 i3lock_LDADD = \
+	$(LIBOBJS) \
 	$(XCB_LIBS) \
 	$(XCB_IMAGE_LIBS) \
 	$(XCB_UTIL_LIBS) \
@@ -38,6 +39,7 @@ i3lock_LDADD = \
 	$(CODE_COVERAGE_LDFLAGS)
 
 i3lock_SOURCES = \
+	compat.h \
 	cursors.h \
 	dpi.c \
 	dpi.h \
@@ -49,6 +51,8 @@ i3lock_SOURCES = \
 	unlock_indicator.h \
 	xcb.c \
 	xcb.h
+
+dist_EXTRA_i3lock_SOURCES = compat/*.[ch]
 
 EXTRA_DIST = \
 	$(pamd_files) \
