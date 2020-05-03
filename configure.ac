@@ -62,7 +62,7 @@ AC_CHECK_TYPES([mode_t, off_t, pid_t, size_t, ssize_t], , [AC_MSG_FAILURE([canno
 
 # Checks for library functions.
 AC_FUNC_FORK
-AC_CHECK_FUNCS([atexit dup2 ftruncate getcwd gettimeofday localtime_r memchr memset mkdir rmdir setlocale socket strcasecmp strchr strdup strerror strncasecmp strndup strrchr strspn strstr strtol strtoul], , [AC_MSG_FAILURE([cannot find the $ac_func function, which i3lock requires])])
+AC_CHECK_FUNCS([atexit dup2 ftruncate getcwd gettimeofday kill localtime_r memchr memset mkdir rmdir setlocale socket socketpair strcasecmp strchr strdup strerror strncasecmp strndup strrchr strspn strstr strtol strtoul waitpid], , [AC_MSG_FAILURE([cannot find the $ac_func function, which i3lock requires])])
 
 # Check for functions with a compatibility implementation.
 AC_CONFIG_LIBOBJ_DIR(compat)

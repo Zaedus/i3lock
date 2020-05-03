@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <pwd.h>
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
@@ -19,6 +20,8 @@
 #include <err.h>
 #include <errno.h>
 #include <assert.h>
+#include <signal.h>
+#include <wait.h>
 #ifdef __OpenBSD__
 #include <bsd_auth.h>
 #else
@@ -45,6 +48,7 @@
 #include "unlock_indicator.h"
 #include "randr.h"
 #include "dpi.h"
+#include "fprint.h"
 #include "compat.h"
 
 #define TSTAMP_N_SECS(n) (n * 1.0)
@@ -82,6 +86,10 @@ extern auth_state_t auth_state;
 int failed_attempts = 0;
 bool show_failed_attempts = false;
 bool retry_verification = false;
+
+bool enable_fprint_auth = false;
+int imsg_fds[2];
+struct imsgbuf ibuf;
 
 static struct xkb_state *xkb_state;
 static struct xkb_context *xkb_context;
@@ -867,6 +875,72 @@ static void xcb_prepare_cb(EV_P_ ev_prepare *w, int revents) {
 }
 
 /*
+ * TODO
+ */
+static void imsg_recv_cb(EV_P_ struct ev_io *w, int revents) {
+    struct imsg imsg;
+    ssize_t n;
+
+    if ((n = imsg_read(&ibuf)) == -1 && errno != EAGAIN) {
+        /* handle read error */
+        return;
+    }
+    if (n == 0) {
+        /* handle closed connection */
+        return;
+    }
+
+    for (;;) {
+        if ((n = imsg_get(&ibuf, &imsg)) == -1) {
+            /* handle read error */
+            return;
+        }
+        if (n == 0) /* no more messages */
+            return;
+        switch (imsg.hdr.type) {
+            case PAM_SUCCESS:
+                DEBUG("==> successfully authenticated\n");
+                ev_break(EV_DEFAULT, EVBREAK_ALL);
+                return;
+            case PAM_PERM_DENIED:
+                if (debug_mode)
+                    fprintf(stderr, "==> Authentication failure\n");
+                auth_state = STATE_AUTH_WRONG;
+                failed_attempts += 1;
+                if (unlock_indicator)
+                    redraw_screen();
+                /* Clear this state after 2 seconds (unless the user enters another
+                 * password during that time). */
+                ev_now_update(main_loop);
+                START_TIMER(clear_auth_wrong_timeout, TSTAMP_N_SECS(2), clear_auth_wrong);
+
+                /* Cancel the clear_indicator_timeout, it would hide the unlock indicator
+                 * too early. */
+                STOP_TIMER(clear_indicator_timeout);
+
+                /* beep on authentication failure, if enabled */
+                if (beep) {
+                    xcb_bell(conn, 100);
+                    xcb_flush(conn);
+                }
+                break;
+            case FPRINT_PAM_CONV:
+                /* show a pink indicator, the fingerprint reader is ready */
+                if (unlock_indicator) {
+                    auth_state_t old_auth_state = auth_state;
+                    auth_state = STATE_READING_FINGERPRINT;
+                    redraw_screen();
+                    auth_state = old_auth_state;
+
+                    struct ev_timer *timeout = NULL;
+                    START_TIMER(timeout, TSTAMP_N_SECS(0.25), clear_indicator_cb);
+                }
+        }
+        imsg_free(&imsg);
+    }
+}
+
+/*
  * Try closing logind sleep lock fd passed over from xss-lock, in case we're
  * being run from there.
  *
@@ -1032,6 +1106,7 @@ int main(int argc, char *argv[]) {
         {"ignore-empty-password", no_argument, NULL, 'e'},
         {"inactivity-timeout", required_argument, NULL, 'I'},
         {"show-failed-attempts", no_argument, NULL, 'f'},
+        {"fprint-auth", no_argument, NULL, '2'},
         {NULL, no_argument, NULL, 0}};
 
     if ((pw = getpwuid(getuid())) == NULL)
@@ -1039,7 +1114,7 @@ int main(int argc, char *argv[]) {
     if ((username = pw->pw_name) == NULL)
         errx(EXIT_FAILURE, "pw->pw_name is NULL.");
 
-    char *optstring = "hvnbdc:p:ui:teI:f";
+    char *optstring = "hvnbdc:p:ui:teI:f2";
     while ((o = getopt_long(argc, argv, optstring, longopts, &longoptind)) != -1) {
         switch (o) {
             case 'v':
@@ -1102,12 +1177,35 @@ int main(int argc, char *argv[]) {
             default:
                 errx(EXIT_FAILURE, "Syntax: i3lock [-v] [-n] [-b] [-d] [-c color] [-u] [-p win|default]"
                                    " [-i image.png] [-t] [-e] [-I timeout] [-f]");
+            case '2':
+                enable_fprint_auth = true;
         }
     }
 
     /* We need (relatively) random numbers for highlighting a random part of
      * the unlock indicator upon keypresses. */
     srand(time(NULL));
+
+    pid_t fprint_pid = -1;
+    if (enable_fprint_auth) {
+        if (socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC, imsg_fds) == -1)
+            err(EXIT_FAILURE, "socketpair");
+        switch (fprint_pid = fork()) {
+            case -1:
+                enable_fprint_auth = false;
+                (void)close(imsg_fds[0]);
+                (void)close(imsg_fds[1]);
+                break;
+            case 0:
+                /* Child */
+                close(imsg_fds[0]);
+                imsg_init(&ibuf, imsg_fds[1]);
+                exit(fprint_main(&ibuf, username));
+        }
+        /* Parent */
+        close(imsg_fds[1]);
+        imsg_init(&ibuf, imsg_fds[0]);
+    }
 
 #ifndef __OpenBSD__
     /* Initialize PAM */
@@ -1284,6 +1382,12 @@ int main(int argc, char *argv[]) {
     ev_io_init(xcb_watcher, xcb_got_event, xcb_get_file_descriptor(conn), EV_READ);
     ev_io_start(main_loop, xcb_watcher);
 
+    if (enable_fprint_auth) {
+        struct ev_io *imsg_watcher = calloc(sizeof(struct ev_io), 1);
+        ev_io_init(imsg_watcher, imsg_recv_cb, ibuf.fd, EV_READ);
+        ev_io_start(main_loop, imsg_watcher);
+    }
+
     ev_check_init(xcb_check, xcb_check_cb);
     ev_check_start(main_loop, xcb_check);
 
@@ -1301,6 +1405,12 @@ int main(int argc, char *argv[]) {
         pam_end(pam_handle, PAM_SUCCESS);
     }
 #endif
+
+    if (fprint_pid != -1) {
+        if (kill(fprint_pid, SIGTERM) != -1) {
+            (void)waitpid(fprint_pid, NULL, 0);
+        }
+    }
 
     if (stolen_focus == XCB_NONE) {
         return 0;

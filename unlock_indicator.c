@@ -154,6 +154,9 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
             case STATE_I3LOCK_LOCK_FAILED:
                 cairo_set_source_rgba(ctx, 250.0 / 255, 0, 0, 0.75);
                 break;
+            case STATE_READING_FINGERPRINT:
+                cairo_set_source_rgba(ctx, 0xb1 / 255., 0x62 / 255., 0x86 / 255., 0.75);
+                break;
             default:
                 if (unlock_state == STATE_NOTHING_TO_DELETE) {
                     cairo_set_source_rgba(ctx, 250.0 / 255, 0, 0, 0.75);
@@ -172,6 +175,9 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
             case STATE_AUTH_WRONG:
             case STATE_I3LOCK_LOCK_FAILED:
                 cairo_set_source_rgb(ctx, 125.0 / 255, 51.0 / 255, 0);
+                break;
+            case STATE_READING_FINGERPRINT:
+                cairo_set_source_rgb(ctx, 0xd3 / 255., 0x86 / 255., 0x9b / 255.);
                 break;
             case STATE_AUTH_IDLE:
                 if (unlock_state == STATE_NOTHING_TO_DELETE) {

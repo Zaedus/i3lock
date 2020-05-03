@@ -43,6 +43,8 @@ i3lock_SOURCES = \
 	cursors.h \
 	dpi.c \
 	dpi.h \
+	fprint.c \
+	fprint.h \
 	i3lock.c \
 	i3lock.h \
 	randr.c \
