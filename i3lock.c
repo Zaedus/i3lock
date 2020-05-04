@@ -83,6 +83,7 @@ static struct ev_timer *clear_indicator_timeout;
 static struct ev_timer *discard_passwd_timeout;
 extern unlock_state_t unlock_state;
 extern auth_state_t auth_state;
+extern fingerprint_state_t fingerprint_state;
 int failed_attempts = 0;
 bool show_failed_attempts = false;
 bool retry_verification = false;
@@ -927,13 +928,8 @@ static void imsg_recv_cb(EV_P_ struct ev_io *w, int revents) {
             case FPRINT_PAM_CONV:
                 /* show a pink indicator, the fingerprint reader is ready */
                 if (unlock_indicator) {
-                    auth_state_t old_auth_state = auth_state;
-                    auth_state = STATE_READING_FINGERPRINT;
+                    fingerprint_state = STATE_FPRINT_READING;
                     redraw_screen();
-                    auth_state = old_auth_state;
-
-                    struct ev_timer *timeout = NULL;
-                    START_TIMER(timeout, TSTAMP_N_SECS(0.25), clear_indicator_cb);
                 }
         }
         imsg_free(&imsg);

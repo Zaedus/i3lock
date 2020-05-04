@@ -80,6 +80,7 @@ static xcb_visualtype_t *vistype;
  * indicator. */
 unlock_state_t unlock_state;
 auth_state_t auth_state;
+fingerprint_state_t fingerprint_state;
 
 /*
  * Draws global image with fill color onto a pixmap with the given
@@ -154,9 +155,6 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
             case STATE_I3LOCK_LOCK_FAILED:
                 cairo_set_source_rgba(ctx, 250.0 / 255, 0, 0, 0.75);
                 break;
-            case STATE_READING_FINGERPRINT:
-                cairo_set_source_rgba(ctx, 0xb1 / 255., 0x62 / 255., 0x86 / 255., 0.75);
-                break;
             default:
                 if (unlock_state == STATE_NOTHING_TO_DELETE) {
                     cairo_set_source_rgba(ctx, 250.0 / 255, 0, 0, 0.75);
@@ -176,9 +174,6 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
             case STATE_I3LOCK_LOCK_FAILED:
                 cairo_set_source_rgb(ctx, 125.0 / 255, 51.0 / 255, 0);
                 break;
-            case STATE_READING_FINGERPRINT:
-                cairo_set_source_rgb(ctx, 0xd3 / 255., 0x86 / 255., 0x9b / 255.);
-                break;
             case STATE_AUTH_IDLE:
                 if (unlock_state == STATE_NOTHING_TO_DELETE) {
                     cairo_set_source_rgb(ctx, 125.0 / 255, 51.0 / 255, 0);
@@ -190,7 +185,7 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
         }
         cairo_stroke(ctx);
 
-        /* Draw an inner seperator line. */
+        /* Draw an inner separator line. */
         cairo_set_source_rgb(ctx, 0, 0, 0);
         cairo_set_line_width(ctx, 2.0);
         cairo_arc(ctx,
@@ -309,6 +304,20 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
                       highlight_start + (M_PI / 3.0) /* end */);
             cairo_stroke(ctx);
         }
+    }
+
+    if (unlock_indicator && fingerprint_state == STATE_FPRINT_READING) {
+        cairo_new_sub_path(ctx);
+        /* Draw inner circle line. */
+        cairo_set_source_rgba(ctx, 0xb1 / 255., 0x62 / 255., 0x86 / 255., 0.5);
+        cairo_set_line_width(ctx, 2.0);
+        cairo_arc(ctx,
+                BUTTON_CENTER /* x */,
+                BUTTON_CENTER /* y */,
+                BUTTON_RADIUS - 10 /* radius */,
+                0,
+                2 * M_PI);
+        cairo_fill_preserve(ctx);
     }
 
     if (xr_screens > 0) {
