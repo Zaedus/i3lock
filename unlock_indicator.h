@@ -19,6 +19,11 @@ typedef enum {
     STATE_I3LOCK_LOCK_FAILED = 4, /* i3lock failed to load */
 } auth_state_t;
 
+typedef enum {
+    STATE_FPRINT_SLEEPING = 0, /* the fingerprint reader is not ready */
+    STATE_FPRINT_READING  = 1, /* the fingerprint reader is ready */
+} fingerprint_state_t;
+
 xcb_pixmap_t draw_image(uint32_t* resolution);
 void redraw_screen(void);
 void clear_indicator(void);

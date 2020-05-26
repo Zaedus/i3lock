@@ -80,6 +80,7 @@ static xcb_visualtype_t *vistype;
  * indicator. */
 unlock_state_t unlock_state;
 auth_state_t auth_state;
+fingerprint_state_t fingerprint_state;
 
 /*
  * Draws global image with fill color onto a pixmap with the given
@@ -303,6 +304,20 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
                       highlight_start + (M_PI / 3.0) /* end */);
             cairo_stroke(ctx);
         }
+    }
+
+    if (unlock_indicator && fingerprint_state == STATE_FPRINT_READING) {
+        cairo_new_sub_path(ctx);
+        /* Draw inner circle line. */
+        cairo_set_source_rgba(ctx, 0xb1 / 255., 0x62 / 255., 0x86 / 255., 0.5);
+        cairo_set_line_width(ctx, 2.0);
+        cairo_arc(ctx,
+                BUTTON_CENTER /* x */,
+                BUTTON_CENTER /* y */,
+                BUTTON_RADIUS - 10 /* radius */,
+                0,
+                2 * M_PI);
+        cairo_fill_preserve(ctx);
     }
 
     if (xr_screens > 0) {

@@ -21,6 +21,8 @@
 #include <err.h>
 #include <errno.h>
 #include <assert.h>
+#include <signal.h>
+#include <wait.h>
 #ifdef __OpenBSD__
 #include <bsd_auth.h>
 #else
@@ -47,6 +49,7 @@
 #include "unlock_indicator.h"
 #include "randr.h"
 #include "dpi.h"
+#include "fprint.h"
 
 #define TSTAMP_N_SECS(n) (n * 1.0)
 #define TSTAMP_N_MINS(n) (60 * TSTAMP_N_SECS(n))
@@ -80,9 +83,16 @@ static struct ev_timer *clear_indicator_timeout;
 static struct ev_timer *discard_passwd_timeout;
 extern unlock_state_t unlock_state;
 extern auth_state_t auth_state;
+extern fingerprint_state_t fingerprint_state;
 int failed_attempts = 0;
 bool show_failed_attempts = false;
 bool retry_verification = false;
+
+bool enable_fprint_auth = false;
+struct {
+    pid_t pid;
+    int to_fd, from_fd;
+} fprint;
 
 static struct xkb_state *xkb_state;
 static struct xkb_context *xkb_context;
@@ -393,6 +403,9 @@ static void handle_key_press(xcb_key_press_event_t *event) {
     int n;
     bool ctrl;
     bool composed = false;
+
+    if (fprint.pid && fingerprint_state == STATE_FPRINT_SLEEPING)
+        (void)write(fprint.to_fd, "RETRY\n", sizeof("RETRY\n"));
 
     ksym = xkb_state_key_get_one_sym(xkb_state, event->detail);
     ctrl = xkb_state_mod_name_is_active(xkb_state, XKB_MOD_NAME_CTRL, XKB_STATE_MODS_DEPRESSED);
@@ -868,6 +881,66 @@ static void xcb_prepare_cb(EV_P_ ev_prepare *w, int revents) {
 }
 
 /*
+ * Get the messages from the fprint child process and see how the fingerint
+ * authentication went.
+ */
+static void fprint_recv_cb(EV_P_ struct ev_io *w, int revents) {
+    char buf[BUFSIZ] = { 0 };
+    char *p, *l;
+    ssize_t nr;
+
+    if ((nr = read(fprint.from_fd, buf, BUFSIZ - 1)) == -1 && errno != EAGAIN) {
+        /* handle read error */
+        return;
+    }
+    if (nr == 0) {
+        /* handle closed connection */
+        ev_io_stop(EV_A_ w);
+        return;
+    }
+
+    for (p = buf, l = strsep(&p, "\n"); l != NULL; l = strsep(&p, "\n")) {
+        if (strlen(l) == 0) {
+            continue;
+        } else if (strcmp(l, "PAM_AUTH_STARTING") == 0) {
+            DEBUG("fprint: PAM AUTH STARTING\n");
+            /* show a pink indicator, the fingerprint reader is ready */
+            fingerprint_state = STATE_FPRINT_READING;
+            if (unlock_indicator) {
+                redraw_screen();
+            }
+        } else if (strcmp(l, "PAM_AUTH_SUCCESS") == 0) {
+            DEBUG("fprint: successfully authenticated\n");
+            ev_break(EV_DEFAULT, EVBREAK_ALL);
+            return;
+        } else if (strcmp(l, "PAM_PERM_DENIED") == 0) {
+            DEBUG("fprint: Authentication failure\n");
+            auth_state = STATE_AUTH_WRONG;
+            fingerprint_state = STATE_FPRINT_SLEEPING;
+            failed_attempts += 1;
+            if (unlock_indicator)
+                redraw_screen();
+            /* Clear this state after 2 seconds (unless the user enters another
+             * password during that time). */
+            ev_now_update(main_loop);
+            START_TIMER(clear_auth_wrong_timeout, TSTAMP_N_SECS(2), clear_auth_wrong);
+            /* Cancel the clear_indicator_timeout, it would hide the unlock indicator
+             * too early. */
+            STOP_TIMER(clear_indicator_timeout);
+            /* beep on authentication failure, if enabled */
+            if (beep) {
+                xcb_bell(conn, 100);
+                xcb_flush(conn);
+            }
+            break;
+        } else {
+            /* PAM conversation or unsupported PAM return status */
+            DEBUG("fprint: %s\n", l);
+        }
+    }
+}
+
+/*
  * Try closing logind sleep lock fd passed over from xss-lock, in case we're
  * being run from there.
  *
@@ -1033,6 +1106,7 @@ int main(int argc, char *argv[]) {
         {"ignore-empty-password", no_argument, NULL, 'e'},
         {"inactivity-timeout", required_argument, NULL, 'I'},
         {"show-failed-attempts", no_argument, NULL, 'f'},
+        {"fprint-auth", no_argument, NULL, '2'},
         {NULL, no_argument, NULL, 0}};
 
     if ((pw = getpwuid(getuid())) == NULL)
@@ -1040,7 +1114,7 @@ int main(int argc, char *argv[]) {
     if ((username = pw->pw_name) == NULL)
         errx(EXIT_FAILURE, "pw->pw_name is NULL.");
 
-    char *optstring = "hvnbdc:p:ui:teI:f";
+    char *optstring = "hvnbdc:p:ui:teI:f2";
     while ((o = getopt_long(argc, argv, optstring, longopts, &longoptind)) != -1) {
         switch (o) {
             case 'v':
@@ -1103,12 +1177,50 @@ int main(int argc, char *argv[]) {
             default:
                 errx(EXIT_FAILURE, "Syntax: i3lock [-v] [-n] [-b] [-d] [-c color] [-u] [-p win|default]"
                                    " [-i image.png] [-t] [-e] [-I timeout] [-f]");
+            case '2':
+                enable_fprint_auth = true;
         }
     }
 
     /* We need (relatively) random numbers for highlighting a random part of
      * the unlock indicator upon keypresses. */
     srand(time(NULL));
+
+    /* XXX: see if this logic must be extracted in a function */
+    if (enable_fprint_auth) {
+        int to_fprint_fds[2], from_fprint_fds[2];
+        if (pipe(to_fprint_fds) < 0 || pipe(from_fprint_fds) < 0)
+            err(EXIT_FAILURE, "pipe");
+        sigaction(SIGPIPE, &(struct sigaction){{SIG_IGN}}, NULL);
+        /* XXX: fcntl O_NONBLOCK? */
+        switch (fprint.pid = fork()) {
+            case -1:
+                (void)close(to_fprint_fds[0]);
+                (void)close(to_fprint_fds[1]);
+                (void)close(from_fprint_fds[0]);
+                (void)close(from_fprint_fds[1]);
+                break;
+            case 0:
+                /* Child */
+                (void)close(from_fprint_fds[0]); /* reading end */
+                (void)close(to_fprint_fds[1]);   /* writing end */
+                close(STDIN_FILENO);
+                dup(to_fprint_fds[0]);
+                (void)close(to_fprint_fds[0]);   /* reading end */
+                close(STDOUT_FILENO);
+                dup(from_fprint_fds[1]);
+                close(STDERR_FILENO);
+                dup(from_fprint_fds[1]);
+                (void)close(from_fprint_fds[1]); /* writing end */
+                _exit(fprint_main(username));
+            default:
+                /* Parent */
+                fprint.from_fd = from_fprint_fds[0];
+                fprint.to_fd = to_fprint_fds[1];
+                (void)close(from_fprint_fds[1]); /* writing end */
+                (void)close(to_fprint_fds[0]);   /* reading end */
+        }
+    }
 
 #ifndef __OpenBSD__
     /* Initialize PAM */
@@ -1285,6 +1397,12 @@ int main(int argc, char *argv[]) {
     ev_io_init(xcb_watcher, xcb_got_event, xcb_get_file_descriptor(conn), EV_READ);
     ev_io_start(main_loop, xcb_watcher);
 
+    if (fprint.pid) {
+        struct ev_io *fprint_watcher = calloc(sizeof(struct ev_io), 1);
+        ev_io_init(fprint_watcher, fprint_recv_cb, fprint.from_fd, EV_READ);
+        ev_io_start(main_loop, fprint_watcher);
+    }
+
     ev_check_init(xcb_check, xcb_check_cb);
     ev_check_start(main_loop, xcb_check);
 
@@ -1302,6 +1420,12 @@ int main(int argc, char *argv[]) {
         pam_end(pam_handle, PAM_SUCCESS);
     }
 #endif
+
+    if (fprint.pid) {
+        if (kill(fprint.pid, SIGTERM) != -1) {
+            (void)waitpid(fprint.pid, NULL, 0);
+        }
+    }
 
     if (stolen_focus == XCB_NONE) {
         return 0;

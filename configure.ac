@@ -66,11 +66,16 @@ AC_FUNC_FORK
 AC_FUNC_LSTAT_FOLLOWS_SLASHED_SYMLINK
 AC_FUNC_STRNLEN
 AC_CHECK_FUNCS([ \
+    dup \
     gettimeofday \
+    kill \
     memset \
+    pipe \
     strdup \
     strerror \
+    strsep \
     strtol \
+    waitpid \
 ], , [AC_MSG_FAILURE([cannot find the $ac_func function, which i3lock requires])])
 
 # Checks for libraries.
@@ -136,6 +141,7 @@ AC_CHECK_HEADERS([ \
     sys/types.h \
     time.h \
     unistd.h \
+    wait.h \
 ], , [AC_MSG_FAILURE([cannot find the $ac_header header, which i3lock requires])])
 
 AC_CONFIG_FILES([Makefile])
