@@ -184,7 +184,7 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
         }
         cairo_stroke(ctx);
 
-        /* Draw an inner seperator line. */
+        /* Draw an inner separator line. */
         cairo_set_source_rgb(ctx, 0, 0, 0);
         cairo_set_line_width(ctx, 2.0);
         cairo_arc(ctx,
