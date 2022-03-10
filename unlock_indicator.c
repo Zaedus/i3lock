@@ -149,7 +149,7 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
         switch (auth_state) {
             case STATE_AUTH_VERIFY:
             case STATE_AUTH_LOCK:
-                cairo_set_source_rgba(ctx, 0, 114.0 / 255, 255.0 / 255, 0.75);
+                cairo_set_source_rgba(ctx, 0, 114.0 / 255, 255.0 / 255, 0.0);
                 break;
             case STATE_AUTH_WRONG:
             case STATE_I3LOCK_LOCK_FAILED:
@@ -309,7 +309,7 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
     if (unlock_indicator && fingerprint_state == STATE_FPRINT_READING) {
         cairo_new_sub_path(ctx);
         /* Draw inner circle line. */
-        cairo_set_source_rgba(ctx, 0xb1 / 255., 0x62 / 255., 0x86 / 255., 0.5);
+        cairo_set_source_rgba(ctx, 142 / 255., 141 / 255., 160 / 255., 0.2);
         cairo_set_line_width(ctx, 2.0);
         cairo_arc(ctx,
                 BUTTON_CENTER /* x */,
